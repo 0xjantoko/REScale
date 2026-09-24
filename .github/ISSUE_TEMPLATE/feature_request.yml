@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        REScale is a zero-dependency project: proposals that require a
+        third-party crate can only be accepted behind an optional Cargo feature
+        or in a separate opt-in crate. The README **Roadmap** lists what is
+        already planned.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do that is hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: API sketch, CLI flag, or DSP approach if you have one in mind.
+    validations:
+      required: true
+  - type: dropdown
+    id: deps
+    attributes:
+      label: Would this need an external crate?
+      options:
+        - "No — implementable with the Rust standard library"
+        - "Yes — but only behind an optional feature flag"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Existing workarounds, or how other projects solve it.
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I checked the Roadmap in the README and this is not already planned.
+          required: true

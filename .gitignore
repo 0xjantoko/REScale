@@ -1,0 +1,10 @@
+/target
+output_*.wav
+REScale-*.wav
+output_*.mp3
+REScale-*.mp3
+*.log
+
+# Internal documents (not part of the public open-source distribution)
+/private
+

@@ -1,0 +1,77 @@
+name: Bug report
+description: Report a reproducible defect in the engine or the CLI
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please keep it minimal and reproducible.
+
+        Before filing, check **Known limitations** in the README — several known
+        issues (limiter transient distortion, CLI latency shift, no resampling,
+        no LUFS) are already documented and do not need a new issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Observed behaviour, including any error message or panic output.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Exact command(s) or a minimal Rust snippet. Include input format details (sample rate, channels, bit depth).
+      placeholder: |
+        1. cargo run --release --bin rescale_cli -- input.wav -1
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: REScale version or commit
+      placeholder: "v0.1.0 / commit b89b600"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Rust version
+      placeholder: "Windows 11 24H2, rustc 1.95.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      multiple: true
+      options:
+        - engine / ProcessorChain / AudioBlock
+        - filter / EQ
+        - dynamics (compressor, limiter, envelope)
+        - FFT / windowing
+        - WAV I/O
+        - rescale-cli flags or workflow
+        - MP3 path (ffmpeg)
+        - TUI
+        - documentation
+        - other / not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I read the README section "Known limitations" and this is not one of them.
+          required: true
+        - label: I searched existing issues for duplicates.
+          required: true

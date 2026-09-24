@@ -1,0 +1,13 @@
+# Normalize line endings so clones on any OS produce identical files.
+* text=auto eol=lf
+
+# Explicitly binary (never normalized)
+*.png binary
+*.jpg binary
+*.gif binary
+*.wav binary
+*.mp3 binary
+*.flac binary
+
+# Generated / lock files that must keep LF
+Cargo.lock text eol=lf

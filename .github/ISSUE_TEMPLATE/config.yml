@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Known limitations
+    url: https://github.com/0xjantoko/REScale#known-limitations
+    about: Read this first — limiter, latency, resampling and metering gaps are documented here.
+  - name: Roadmap
+    url: https://github.com/0xjantoko/REScale#roadmap
+    about: Planned work, including the limiter rewrite and stereo linking.

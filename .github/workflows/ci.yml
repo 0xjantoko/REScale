@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Quality gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Rustdoc (deny warnings)
+        run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Build all targets
+        run: cargo build --workspace --all-targets --locked
+
+      - name: Test
+        run: cargo test --workspace --all-targets --locked
+
+  msrv:
+    name: MSRV (Rust 1.78)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.78.0
+
+      - name: Build against the minimum supported Rust version
+        run: cargo check --workspace --all-targets --locked
+
+  zero-dependency:
+    name: Zero dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Crate graph must contain only workspace members
+        shell: bash
+        run: |
+          set -euo pipefail
+          deps=$(cargo tree --workspace -e normal,build,dev --prefix none \
+            | awk '{print $1}' | grep -v '^$' | sort -u)
+          echo "Resolved packages:"
+          echo "$deps" | sed 's/^/  /'
+          unexpected=$(printf '%s\n' "$deps" | grep -vE '^(rescale-core|rescale-cli)$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::Zero-dependency policy violated by: $unexpected"
+            exit 1
+          fi
+
+      - name: Locked offline build (no network, no registry)
+        run: cargo build --workspace --all-targets --locked --offline
+
+      - name: rescale-core must stay unsafe-free
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -rn --include='*.rs' '\bunsafe\b' crates/rescale-core/src; then
+            echo "::error::rescale-core must remain free of unsafe code"
+            exit 1
+          fi
+          echo "OK: no unsafe in rescale-core"
+
+      - name: No vendored sources or patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d vendor || { echo "::error::vendor/ directory found"; exit 1; }
+          if grep -rn --include='Cargo.toml' -E '^\s*\[patch|^\[replace\]|git\s*=' .; then
+            echo "::error::Cargo.toml patch/replace/git dependency found"
+            exit 1
+          fi
+          echo "OK: no vendored sources, patches, or git dependencies"

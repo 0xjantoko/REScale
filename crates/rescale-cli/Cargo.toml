@@ -1,0 +1,19 @@
+[package]
+name = "rescale-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI for rescaling / normalizing / mastering audio files via the REScale DSP engine"
+license = "MIT OR Apache-2.0"
+keywords = ["audio", "mastering", "normalizer", "cli", "dsp"]
+categories = ["multimedia::audio", "command-line-utilities"]
+repository = "https://github.com/0xjantoko/REScale"
+rust-version = "1.78"
+# The mastering CLI is distributed as source in the repository, not on crates.io.
+publish = false
+
+[[bin]]
+name = "rescale_cli"
+path = "src/bin/rescale_cli.rs"
+
+[dependencies]
+rescale-core = { path = "../rescale-core" }
