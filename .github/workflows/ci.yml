@@ -54,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.78.0
+      - uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Build against the minimum supported Rust version
         run: cargo check --workspace --all-targets --locked
