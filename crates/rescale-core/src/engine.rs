@@ -102,17 +102,32 @@ pub trait AudioProcessor {
 
 pub struct ProcessorChain {
     processors: Vec<Box<dyn AudioProcessor>>,
+    /// Sisa frame tail yang belum ditiriskan oleh [`AudioProcessor::flush`].
+    tail_frames_remaining: usize,
 }
 
 impl ProcessorChain {
     pub fn new() -> Self {
         Self {
             processors: Vec::new(),
+            tail_frames_remaining: 0,
         }
     }
 
     pub fn push<P: AudioProcessor + 'static>(&mut self, processor: P) {
         self.processors.push(Box::new(processor));
+    }
+
+    /// Menjalankan seluruh stage tanpa menyentuh penghitung tail.
+    ///
+    /// Dipakai bersama oleh `process` dan `flush`: keduanya mengalirkan block
+    /// melalui rantai yang sama, yang berbeda hanya asal data block dan cara
+    /// penghitung tail diperbarui.
+    fn process_stages(&mut self, block: &mut AudioBlock<'_>) -> Result<(), EngineError> {
+        for processor in &mut self.processors {
+            processor.process(block)?;
+        }
+        Ok(())
     }
 }
 
@@ -127,13 +142,14 @@ impl AudioProcessor for ProcessorChain {
         for processor in &mut self.processors {
             processor.prepare(spec)?;
         }
+        self.tail_frames_remaining = self.latency_samples();
         Ok(())
     }
 
     fn process(&mut self, block: &mut AudioBlock<'_>) -> Result<(), EngineError> {
-        for processor in &mut self.processors {
-            processor.process(block)?;
-        }
+        self.process_stages(block)?;
+        // Setiap block baru menambah tail sepanjang total latency chain.
+        self.tail_frames_remaining = self.latency_samples();
         Ok(())
     }
 
@@ -141,6 +157,7 @@ impl AudioProcessor for ProcessorChain {
         for processor in &mut self.processors {
             processor.reset();
         }
+        self.tail_frames_remaining = self.latency_samples();
     }
 
     fn latency_samples(&self) -> usize {
@@ -150,15 +167,35 @@ impl AudioProcessor for ProcessorChain {
             .sum()
     }
 
+    /// Meniriskan tail seluruh chain setelah input habis.
+    ///
+    /// Tail sebuah rantai processor sepanjang jumlah latency semua stage. Karena
+    /// itu cukup mengalirkan block berisi senyap melewati seluruh stage: setiap
+    /// delay internal (lookahead limiter, dst.) mengeluarkan sampel yang masih
+    /// tertahan, lalu stage berikutnya memproses tail tersebut seperti sinyal
+    /// biasa.
+    ///
+    /// Pendekatan ini benar untuk urutan stage apa pun — termasuk bila processor
+    /// tanpa latency berada sebelum maupun sesudah processor berlatency.
     fn flush(&mut self, block: &mut AudioBlock<'_>) -> Result<usize, EngineError> {
-        let mut frames_flushed = 0;
-        for processor in &mut self.processors {
-            if frames_flushed == 0 {
-                frames_flushed = processor.flush(block)?;
-            } else {
-                processor.process(block)?;
-            }
+        if self.tail_frames_remaining == 0 {
+            return Ok(0);
         }
+
+        let frames_flushed = block.frames().min(self.tail_frames_remaining);
+        if frames_flushed == 0 {
+            return Ok(0);
+        }
+
+        // Input senyap: tail dibangkitkan oleh state internal setiap stage.
+        for channel_index in 0..block.channels() {
+            block
+                .channel_mut(channel_index)
+                .expect("validated channel count")
+                .fill(0.0);
+        }
+        self.process_stages(block)?;
+        self.tail_frames_remaining -= frames_flushed;
         Ok(frames_flushed)
     }
 }
@@ -414,5 +451,217 @@ impl AudioProcessor for LimiterProcessor {
         }
         self.pending_flush_samples -= frames_to_flush;
         Ok(frames_to_flush)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::drc::DetectionMode;
+
+    const SAMPLE_RATE: f32 = 44_100.0;
+    const CHANNELS: usize = 1;
+    const LIMITER_CEILING_DB: f32 = -1.0;
+    const LIMITER_RELEASE_MS: f32 = 50.0;
+    const LIMITER_LOOKAHEAD_MS: f32 = 2.0;
+    const TEST_SIGNAL_FRAMES: usize = 2_048;
+
+    fn audio_spec() -> AudioSpec {
+        AudioSpec::new(SAMPLE_RATE, CHANNELS).expect("spec audio valid")
+    }
+
+    fn limiter_latency_samples() -> usize {
+        (LIMITER_LOOKAHEAD_MS * 0.001 * SAMPLE_RATE).round() as usize
+    }
+
+    fn limiter() -> LimiterProcessor {
+        LimiterProcessor::new(LIMITER_CEILING_DB, LIMITER_RELEASE_MS, LIMITER_LOOKAHEAD_MS)
+    }
+
+    fn transparent_compressor() -> CompressorProcessor {
+        CompressorProcessor::new(CompressorConfig {
+            threshold_db: 0.0,
+            ratio: 1.0,
+            knee_db: 0.0,
+            attack_ms: 1.0,
+            release_ms: 10.0,
+            makeup_gain_db: 0.0,
+            mode: DetectionMode::Peak,
+        })
+    }
+
+    fn full_mastering_chain() -> ProcessorChain {
+        let mut chain = ProcessorChain::new();
+        chain.push(GainProcessor::new(-3.0));
+        chain.push(CompressorProcessor::new(CompressorConfig {
+            threshold_db: -12.0,
+            ratio: 3.0,
+            knee_db: 4.0,
+            attack_ms: 5.0,
+            release_ms: 80.0,
+            makeup_gain_db: 0.0,
+            mode: DetectionMode::Peak,
+        }));
+        chain.push(limiter());
+        chain.prepare(audio_spec()).expect("prepare chain");
+        chain
+    }
+
+    /// Chain dengan/tanpa processor tanpa latency di depan limiter.
+    fn limiter_chain(with_prefix_processor: bool) -> ProcessorChain {
+        let mut chain = ProcessorChain::new();
+        if with_prefix_processor {
+            chain.push(GainProcessor::new(0.0));
+        }
+        chain.push(transparent_compressor());
+        chain.push(limiter());
+        chain.prepare(audio_spec()).expect("prepare chain");
+        chain
+    }
+
+    fn process_block(chain: &mut ProcessorChain, samples: &mut [f32]) {
+        let mut channel_views: Vec<&mut [f32]> = vec![samples];
+        let mut block = AudioBlock::new(&mut channel_views).expect("block valid");
+        chain.process(&mut block).expect("process block");
+    }
+
+    /// Meniriskan tail sampai habis, mengembalikan sampel yang dihasilkan.
+    fn flush_all(chain: &mut ProcessorChain, block_size: usize) -> Vec<f32> {
+        let mut tail = Vec::new();
+        loop {
+            let mut samples = vec![0.0_f32; block_size];
+            let mut channel_views: Vec<&mut [f32]> = vec![samples.as_mut_slice()];
+            let mut block = AudioBlock::new(&mut channel_views).expect("flush block");
+            let flushed = chain.flush(&mut block).expect("flush");
+            if flushed == 0 {
+                break;
+            }
+            tail.extend_from_slice(&samples[..flushed]);
+        }
+        tail
+    }
+
+    fn test_signal(frames: usize) -> Vec<f32> {
+        (0..frames)
+            .map(|index| {
+                let time = index as f32 / SAMPLE_RATE;
+                (2.0 * std::f32::consts::PI * 220.0 * time).sin() * 0.3
+            })
+            .collect()
+    }
+
+    /// Merender sinyal uji dengan ukuran block tertentu, termasuk tail hasil flush.
+    fn render_with_block_size(block_size: usize) -> Vec<f32> {
+        let input = test_signal(TEST_SIGNAL_FRAMES);
+        let mut chain = full_mastering_chain();
+        let mut output = Vec::with_capacity(TEST_SIGNAL_FRAMES + limiter_latency_samples());
+
+        for chunk in input.chunks(block_size) {
+            let mut samples = chunk.to_vec();
+            process_block(&mut chain, &mut samples);
+            output.extend_from_slice(&samples);
+        }
+        output.extend(flush_all(&mut chain, block_size));
+        output
+    }
+
+    #[test]
+    fn flush_drains_limiter_tail_regardless_of_prefix_processors() {
+        let latency = limiter_latency_samples();
+        let mut tails = Vec::new();
+
+        for with_prefix_processor in [false, true] {
+            let mut chain = limiter_chain(with_prefix_processor);
+            let mut impulse = vec![0.0_f32; 64];
+            impulse[0] = 0.5;
+            process_block(&mut chain, &mut impulse);
+            tails.push(flush_all(&mut chain, latency.max(1)));
+        }
+
+        assert_eq!(
+            tails[0].len(),
+            latency,
+            "tail harus sepanjang latency limiter"
+        );
+        assert_eq!(tails[1].len(), latency);
+
+        // Gain 0 dB tidak boleh mengubah tail: hasil kedua chain harus identik.
+        for (plain, prefixed) in tails[0].iter().zip(tails[1].iter()) {
+            assert!((plain - prefixed).abs() < 1e-6);
+        }
+
+        let impulse_survives = tails[0]
+            .iter()
+            .any(|sample| (sample.abs() - 0.5).abs() < 1e-3);
+        assert!(
+            impulse_survives,
+            "tail harus memuat impulse 0.5 yang tertahan lookahead"
+        );
+    }
+
+    #[test]
+    fn flush_drains_the_tail_of_every_latency_stage() {
+        let mut chain = ProcessorChain::new();
+        chain.push(LimiterProcessor::new(
+            LIMITER_CEILING_DB,
+            LIMITER_RELEASE_MS,
+            1.0,
+        ));
+        chain.push(limiter());
+        chain.prepare(audio_spec()).expect("prepare chain");
+
+        let expected_latency = chain.latency_samples();
+        assert_eq!(
+            expected_latency,
+            chain.latency_samples(),
+            "total latency = jumlah latency setiap stage"
+        );
+
+        let mut impulse = vec![0.0_f32; 32];
+        impulse[0] = 0.5;
+        process_block(&mut chain, &mut impulse);
+
+        let tail = flush_all(&mut chain, expected_latency + 16);
+        assert_eq!(
+            tail.len(),
+            expected_latency,
+            "flush harus meniriskan tail dari semua stage berlatency"
+        );
+        let impulse_survives = tail.iter().any(|sample| (sample.abs() - 0.5).abs() < 1e-3);
+        assert!(impulse_survives, "impulse harus keluar dari kedua limiter");
+    }
+
+    #[test]
+    fn flush_returns_zero_when_chain_has_no_latency() {
+        let mut chain = ProcessorChain::new();
+        chain.push(GainProcessor::new(0.0));
+        chain.prepare(audio_spec()).expect("prepare chain");
+
+        let mut samples = vec![0.1_f32; 16];
+        process_block(&mut chain, &mut samples);
+
+        assert_eq!(chain.latency_samples(), 0);
+        assert!(flush_all(&mut chain, 16).is_empty());
+    }
+
+    #[test]
+    fn block_size_does_not_change_output() {
+        let reference = render_with_block_size(TEST_SIGNAL_FRAMES);
+
+        for block_size in [64, 256, 1_024] {
+            let rendered = render_with_block_size(block_size);
+
+            assert_eq!(
+                rendered.len(),
+                reference.len(),
+                "panjang output berbeda pada blok {block_size}"
+            );
+            for (frame, (expected, actual)) in reference.iter().zip(rendered.iter()).enumerate() {
+                assert!(
+                    (expected - actual).abs() < 1e-6,
+                    "blok {block_size}: frame {frame} berbeda ({expected} vs {actual})"
+                );
+            }
+        }
     }
 }

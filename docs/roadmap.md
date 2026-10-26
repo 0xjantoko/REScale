@@ -28,10 +28,17 @@ Planned improvements, feature additions, and architectural evolution for REScale
 - **Effort:** Medium
 
 ### ProcessorChain::flush Bug Fix
-- [ ] Correct drain sequence when non-latency processors precede latency ones
-- [ ] Regression tests at 64, 256, 1024-frame block sizes
+- [x] Correct drain sequence when non-latency processors precede latency ones
+- [x] Regression tests at 64, 256, 1024-frame block sizes
 - **Impact:** Medium — prevents sample loss in common chain configurations
 - **Effort:** Low-Medium
+
+### Correctness Fixes (v0.1.1)
+- [x] `DelayLine` off-by-one: `read_delay(n)` is relative to the last pushed sample; pre-push readers use `read_delay_before_push`
+- [x] RMS envelope time constants: release now matches the configured value (power-domain correction)
+- [x] Multi-stage chain flush covered by regression tests (chain tail = sum of stage latencies)
+- **Impact:** High — removes silent tail loss and timing drift in the DSP core
+- **Effort:** Low (completed)
 
 ---
 

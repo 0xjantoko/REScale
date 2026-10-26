@@ -2,9 +2,9 @@
 
 ## Target: DSP audio engine + mastering CLI zero-dependency (pure Rust) | Architecture: Cargo workspace multi-crate (`rescale-core` library + `rescale-cli` binary)
 
-### Overall Progress: ✅ Stage 1–11 selesai (core workspace + publikasi v0.1.0) | ⬜ Stage 12+ mengikuti `docs/roadmap.md`
+### Overall Progress: ✅ Stage 1–12 selesai (core workspace, publikasi v0.1.0, stabilisasi DSP Sprint 1) | ⬜ Stage 13+ mengikuti `docs/roadmap.md`
 
-> Terakhir diperbarui: sesi konsolidasi dokumentasi P1 (September 2026). Status quality gate diverifikasi ulang: **21/21 test pass**, clippy `-D warnings` 0 issue, fmt clean, build 0 warning.
+> Terakhir diperbarui: sesi stabilisasi DSP Sprint 1 (September 2026). Status quality gate diverifikasi ulang: **32/32 test pass**, clippy `-D warnings` 0 issue, fmt clean, build 0 warning.
 
 ---
 
@@ -167,12 +167,35 @@ Menerbitkan REScale sebagai proyek open source `v0.1.0` — publik, dapat diaudi
 
 ---
 
+## Stage 12: Stabilisasi DSP — Sprint 1 (Selesai)
+### Tujuan
+Menutup bug kebenaran di core DSP sebelum rilis berikutnya: kehilangan tail pada rantai processor, off-by-one pada delay line, dan time constant RMS yang meleset — semuanya tanpa menambah dependensi.
+### Deliverables
+- [x] `ProcessorChain::flush` ditulis ulang: tail = jumlah latency seluruh stage, dibangkitkan dengan mengalirkan input senyap melewati seluruh chain; benar untuk urutan stage apa pun (termasuk beberapa stage berlatency).
+- [x] `DelayLine` off-by-one diperbaiki: `read_delay(n)` relatif terhadap sampel terakhir yang di-push; ditambah `read_delay_before_push` untuk pembaca pre-push (`FeedbackDelay` perilakunya tidak berubah).
+- [x] Latency limiter konsisten: delay fisik = `lookahead_samples` = nilai yang dilaporkan `latency_samples()`.
+- [x] RMS envelope: koefisien domain power dikoreksi (`r²`), release sesuai nilai konfigurasi (sebelumnya ~2× lebih lambat).
+- [x] Regression test skala blok 64/256/1024 frame: output block-wise identik dengan single-block, termasuk tail hasil flush.
+- [x] Unit test baru: semantik delay (integer/fractional/pre-push/process_sample), waktu release envelope (Peak & RMS), flush chain dengan prefix processor dan dua stage berlatency, flush chain tanpa latency.
+- [x] Quality gate terverifikasi: `cargo fmt --check` clean, `cargo clippy -D warnings` 0 issue, `cargo test` **32/32 pass**.
+### Komponen
+- `crates/rescale-core/src/engine.rs` — `ProcessorChain::flush`, penghitung tail, helper `process_stages`, modul test chain
+- `crates/rescale-core/src/buffer/delay_line.rs` — semantik delay + interpolasi + test
+- `crates/rescale-core/src/buffer/effects.rs` — `read_delay_before_push`
+- `crates/rescale-core/src/drc/envelope.rs` — koreksi koefisien RMS + test
+### Konsep
+- **Tail chain = Σ latency stage**: satu-satunya cara benar untuk rantai arbitrer adalah memberi makan senyap dan membiarkan state internal setiap stage mengeluarkan sampel tertahan.
+- **Satu kontrak delay**: `read_delay` selalu post-push; varian pre-push dibuat eksplisit agar tidak ada lagi off-by-one implisit di pemakai.
+- **Zero-dependency tetap utuh**: semua perbaikan murni Rust std, tanpa crate baru; `cargo tree` tetap hanya 2 crate workspace.
+
+---
+
 ## 🏆 Status Engine (verifikasi terakhir)
 
 - **Arsitektur**: Cargo workspace multi-crate — `rescale-core` (engine DSP, zero dependency) + `rescale-cli` (binary & examples). Keputusan arsitektur tercatat di [`docs/architecture.md`](docs/architecture.md).
 - **Modul DSP**: 14 modul di `rescale-core` — gain, normalize, convert, limiter, buffer (3), filter (3), drc (3), fft (3), wav (4), engine, tui (2).
 - **Dependency**: 0 external crates (pure standard library); `Cargo.lock` di-commit; diverifikasi `cargo tree` + CI.
-- **Test Suite**: **21 test** lulus (100% passing).
+- **Test Suite**: **32 test** lulus (100% passing) — termasuk regression test blok 64/256/1024, semantik delay line, waktu release envelope, dan flush chain multi-stage.
 - **Quality Gate**: build 0 error, clippy `-D warnings` 0 issue, fmt clean, rustdoc `-D warnings` 0 issue.
 - **Performance Budget**: full mastering chain + WAV I/O, 3.4 menit audio stereo (44.1 kHz) = 0.170 detik (release). Hot path zero-allocation (streaming per-block, buffer pre-sized).
 - **Streaming Ready**: I/O WAV streaming per block tanpa memuat seluruh file ke RAM.

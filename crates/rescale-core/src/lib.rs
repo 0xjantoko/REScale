@@ -320,8 +320,10 @@ mod tests {
         delay.push(10.0);
         delay.push(20.0);
 
+        // Semantik read_delay: relatif terhadap sampel terakhir yang di-push.
+        // delay 1.5 = interpolasi x[n-1] dan x[n-2] = (10 + 0) / 2.
         let val_linear = delay.read_delay(1.5, InterpolationType::Linear);
-        assert!((val_linear - 15.0).abs() < 1e-4);
+        assert!((val_linear - 5.0).abs() < 1e-4);
     }
 
     #[test]

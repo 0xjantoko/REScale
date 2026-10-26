@@ -36,31 +36,31 @@ CLI processes whole file as single block; `flush()` never called. Output time-sh
 
 ---
 
-### 3. ProcessorChain::flush Tail Drain Bug 🐛 BUG
+### 3. ProcessorChain::flush Tail Drain Bug 🐛 BUG — ✅ FIXED (unreleased)
 
-**Status:** Bug confirmed  
+**Status:** ✅ Fixed (unreleased)  
 **Severity:** Medium (data loss)
 
 When processors without latency precede a latency-introducing processor, `flush()` drains tail incorrectly — samples lost from lookahead buffer.
 
 **Reproduction:** `GainProcessor → Compressor → Limiter` chain produces truncated tail vs `Compressor → Limiter` alone.
 
-**Fix path:** Correct internal delay compensation calculation in drain sequence.
+**Fix path:** ~~Correct internal delay compensation calculation in drain sequence.~~ Done — `flush()` now feeds silence through the whole chain, draining the sum of every stage's latency regardless of processor order.
 
 ---
 
 ## Moderate Issues
 
-### 4. DelayLine Off-by-One Sample
+### 4. DelayLine Off-by-One Sample — ✅ FIXED (unreleased)
 
-**Status:** Bug confirmed  
+**Status:** ✅ Fixed (unreleased)  
 **Severity:** Low-Medium (precision error)
 
 Delay line returns one sample short of nominal delay: `read_delay(n)` yields sample from position `n-1` instead of `n`. Reported latency differs from actual physical delay by one sample.
 
 **Impact:** Subtle phase alignment errors in EQ filters and all-pass sections. Usually inaudible but breaks mathematical precision guarantees.
 
-**Fix path:** Adjust read index by +1 in delay line implementation.
+**Fix path:** ~~Adjust read index by +1 in delay line implementation.~~ Done — `read_delay(n)` is now relative to the last pushed sample; pre-push readers use `read_delay_before_push`. Limiter latency now equals its physical delay.
 
 ---
 
@@ -77,16 +77,16 @@ Compressor and limiter maintain independent per-channel state. Heavy limiting co
 
 ---
 
-### 6. RMS Envelope Release Too Slow
+### 6. RMS Envelope Release Too Slow — ✅ FIXED (unreleased)
 
-**Status:** Implementation artifact  
+**Status:** ✅ Fixed (unreleased)  
 **Severity:** Low-Medium (dynamic response)
 
 RMS envelope release time runs approximately 2× slower than configured value because attack/release smoothing operates in power domain rather than linear domain.
 
 **Example:** Configured `release_ms = 80` ms → actual ~160 ms.
 
-**Fix path:** Convert RMS computation to linear amplitude domain before applying exponential smoothing.
+**Fix path:** ~~Convert RMS computation to linear amplitude domain before applying exponential smoothing.~~ Done — RMS mode applies the squared amplitude coefficient (`r²`) in the power domain, so the release matches the configured time constant.
 
 ---
 
@@ -159,7 +159,7 @@ Only library components have tests. CLI binary relies on manual verification. Ed
 | Severity | Count | Fix ETA |
 |----------|-------|---------|
 | Critical (blocks production use) | 2 | Next minor release |
-| Bug (confirmed, needs fix) | 2 | Backlog |
+| Bug (confirmed, needs fix) | 0 | — (fixed in unreleased) |
 | Design limitation (on roadmap) | 3 | Phased rollout |
 | Minor / cosmetic | 5 | Best-effort |
 

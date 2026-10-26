@@ -16,6 +16,24 @@ Until `1.0.0`, minor releases may contain breaking changes to the public API.
   `Fft::forward`/`Fft::inverse` and the capacity invariants of `RingBuffer`.
 - Rustdoc intra-doc link warnings in the biquad difference-equation formulas;
   CI additionally gates on `cargo doc` with `RUSTDOCFLAGS=-D warnings`.
+- `ProcessorChain::flush` now drains the tail of every latency-bearing stage
+  (chain tail = sum of stage latencies) for any processor order; previously only
+  the first stage that reported flushed frames was drained, which truncated the
+  lookahead tail when other processors were part of the chain.
+- `DelayLine` off-by-one: `read_delay(n)` now returns the signal delayed by
+  exactly `n` samples relative to the last pushed sample, so the limiter's
+  reported latency matches its physical delay. Readers that fetch a delayed
+  value before pushing (e.g. `FeedbackDelay`) use the new
+  `read_delay_before_push`, which keeps their behaviour unchanged.
+- RMS `EnvelopeFollower` time constants: smoothing now compensates for the power
+  domain (`r²` for RMS mode), so release matches the configured value instead of
+  running roughly 2× slower.
+
+### Added
+- Regression tests for block sizes 64, 256 and 1024 frames proving block-wise
+  rendering equals single-block rendering (including the flushed tail), plus
+  unit tests for delay-line semantics, envelope release timing and multi-stage
+  chain flush. Test suite: 32 passing.
 
 ### Planned
 - Rewrite the brickwall limiter: sliding maximum-hold gain reduction over the
@@ -23,13 +41,9 @@ Until `1.0.0`, minor releases may contain breaking changes to the public API.
   clamp becomes a last-resort safety net instead of part of the gain law.
 - Route `rescale-cli` through `WavStreamReader`/`WavStreamWriter`, call
   `flush()`, and compensate `latency_samples()` so output is not time-shifted.
-- Fix `ProcessorChain::flush` so the drained tail passes through every processor.
-- Fix the `DelayLine` off-by-one (`read_delay(n)` currently returns the sample
-  from `n - 1`) and make limiter latency a single source of truth.
 - Move MP3 support behind an optional Cargo feature so the default build needs
   neither crates nor an external `ffmpeg` binary.
-- Regression tests at 64, 256, and 1024 frames; first automated tests for
-  `rescale-cli`.
+- First automated tests for `rescale-cli`.
 - Validation and sanitisation: filter parameter checks, NaN/Inf guards, denormal
   handling.
 

@@ -38,10 +38,15 @@ impl FeedbackDelay {
         self.interp = interp;
     }
 
-    /// Memproses 1 sample audio secara real-time
+    /// Memproses 1 sample audio secara real-time.
+    ///
+    /// Efek ini membaca delay **sebelum** menulis sampel baru, sehingga memakai
+    /// varian `read_delay_before_push` agar nilai yang diambil tetap `x[n - D]`.
     #[inline]
     pub fn process_sample(&mut self, input: f32) -> f32 {
-        let delayed = self.delay_line.read_delay(self.delay_samples, self.interp);
+        let delayed = self
+            .delay_line
+            .read_delay_before_push(self.delay_samples, self.interp);
         let to_delay = input + delayed * self.feedback;
         self.delay_line.push(to_delay);
 
