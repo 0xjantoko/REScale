@@ -2,7 +2,7 @@
 
 > Implementation status as of September 2026: the TUI is an ANSI visualization demo driven by a synthetic signal. It is not an audio device host and does not yet guarantee an end-to-end real-time audio path.
 
-The monitor view shows input/output analysis per channel, peak and RMS in dBFS, the 9-band post-limiter spectrum, dominant frequency, lookahead-limiter latency, RMS change, and frame render time. Meters are based on sample peak and RMS; LUFS and true-peak are not yet available (see [engine-roadmap.md](engine-roadmap.md), Stage 10+). Fixes: cursor visible during input, clean exit on EOF, spectrogram alignment, multi-byte offset.
+The monitor view shows input/output analysis per channel, peak and RMS in dBFS, the 9-band post-limiter spectrum, dominant frequency, lookahead-limiter latency, RMS change, and frame render time. Meters are based on sample peak and RMS; LUFS and true-peak are not yet available (see [roadmap.md](roadmap.md), Phase 2). Fixes: cursor visible during input, clean exit on EOF, spectrogram alignment, multi-byte offset.
 
 ## Visual Theme: DAW Plugin Dark Theme (Stage 10)
 

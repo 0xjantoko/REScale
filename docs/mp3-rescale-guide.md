@@ -1,6 +1,6 @@
 # ReScaling MP3 Files with the REScale CLI
 
-> Implementation status as of September 2026: MP3 requires the `ffmpeg` executable on PATH. The Rust engine itself remains zero-external-crate, but the MP3 path is not free of system dependencies. The limiter currently protects sample peak (not true peak / inter-sample peak — planned for Stage 10+ in the [engine roadmap](engine-roadmap.md)). Pristine mode (`--no-dsp`) is verified bit-identical to a direct ffmpeg decode.
+> Implementation status as of September 2026: MP3 requires the `ffmpeg` executable on PATH. The Rust engine itself remains zero-external-crate, but the MP3 path is not free of system dependencies. The limiter currently protects sample peak (not true peak / inter-sample peak — planned in the [roadmap](roadmap.md)). Pristine mode (`--no-dsp`) is verified bit-identical to a direct ffmpeg decode.
 
 > Output correction: the CLI writes a WAV named `REScale-<input_name>.wav` in the input folder. For MP3 input, the CLI also attempts to write `REScale-<input_name>.mp3` at 320 kbps via ffmpeg. The WAV bit depth can be 16-bit, 24-bit, or 32-bit float (default: 24-bit); TPDF dither is the default for PCM. MP3 decoding uses `pcm_f32le` (full float precision, no intermediate 16-bit quantization). The `--no-dsp` / `--pristine` flags bypass the entire mastering chain — 32f output in this mode is verified bit-identical to a direct ffmpeg decode.
 

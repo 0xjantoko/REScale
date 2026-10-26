@@ -4,7 +4,7 @@
 
 ## Current Quality Boundaries
 
-Peak normalization and BrickwallLimiter operate on sample peaks. LUFS metering and oversampled true-peak detection are not yet available (see the [engine roadmap](engine-roadmap.md), Phase 10+).
+Peak normalization and BrickwallLimiter operate on sample peaks. LUFS metering and oversampled true-peak detection are not yet available (see the [roadmap](roadmap.md), Phase 2).
 
 This document contains the mathematical foundation and a from-scratch implementation (*pure from scratch*, zero external dependency) of the **ReScale Audio** operation in Digital Signal Processing (DSP).
 
