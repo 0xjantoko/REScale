@@ -16,7 +16,7 @@
 [![docs.rs](https://img.shields.io/docsrs/rescale-core)](https://docs.rs/rescale-core)
 [![Dependencies](https://img.shields.io/badge/deps-0-success)](#zero-dependency-policy)
 
-> ⚠️ **v0.1.0 — early, API unstable.** DSP core works but will change. See [Known Limitations →](docs/limitations.md)
+> ⚠️ **v0.2.0 — early, API unstable.** DSP core works but will change. See [Known Limitations →](docs/limitations.md)
 
 ---
 

@@ -8,6 +8,8 @@ Until `1.0.0`, minor releases may contain breaking changes to the public API.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-27
+
 ### Fixed
 - `Fft::compute_magnitude_spectrum` and `Fft::find_dominant_frequency` no longer
   panic on an empty input buffer (slice out of range, division by zero); they

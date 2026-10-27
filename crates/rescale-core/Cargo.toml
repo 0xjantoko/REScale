@@ -1,6 +1,6 @@
 [package]
 name = "rescale-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Pure Rust DSP audio engine core (FFT, filter, DRC, WAV I/O) - zero dependency"
 license = "MIT OR Apache-2.0"
