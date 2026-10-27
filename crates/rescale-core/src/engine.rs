@@ -1,10 +1,16 @@
 //! Fondasi engine audio untuk pemrosesan block-based dan real-time friendly.
 
+use crate::buffer::delay_line::{DelayLine, InterpolationType};
+use crate::drc::LookaheadDetector;
 use crate::filter::ParametricEqualizer3Band;
 use crate::gain::Gain;
-use crate::{BrickwallLimiter, Compressor, CompressorConfig};
+use crate::safety;
+use crate::{Compressor, CompressorConfig};
 use std::error::Error;
 use std::fmt;
+
+/// Cadangan kapasitas DelayLine limiter agar pembacaan selalu aman.
+const LIMITER_DELAY_HEADROOM: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AudioSpec {
@@ -127,6 +133,8 @@ impl ProcessorChain {
         for processor in &mut self.processors {
             processor.process(block)?;
         }
+        // Jaring pengaman terakhir: NaN/Inf/denormal tidak boleh lolos dari engine.
+        safety::sanitize_block(block);
         Ok(())
     }
 }
@@ -358,11 +366,18 @@ impl AudioProcessor for CompressorProcessor {
     }
 }
 
+/// Limiter lookahead dengan deteksi ter-link antar channel.
+///
+/// Satu [`LookaheadDetector`] dipakai bersama semua channel: gain reduction
+/// ditentukan oleh puncak gabungan, sehingga keseimbangan stereo tetap terjaga
+/// saat limiting berat (stereo-linked limiting).
 pub struct LimiterProcessor {
     ceiling_db: f32,
     release_ms: f32,
     lookahead_ms: f32,
-    processors: Vec<BrickwallLimiter>,
+    detector: Option<LookaheadDetector>,
+    delays: Vec<DelayLine>,
+    ceiling_linear: f32,
     latency_samples: usize,
     pending_flush_samples: usize,
 }
@@ -373,52 +388,81 @@ impl LimiterProcessor {
             ceiling_db,
             release_ms,
             lookahead_ms,
-            processors: Vec::new(),
+            detector: None,
+            delays: Vec::new(),
+            ceiling_linear: Gain::db_to_linear(ceiling_db.min(0.0)),
             latency_samples: 0,
             pending_flush_samples: 0,
+        }
+    }
+
+    /// Memproses satu frame: deteksi puncak gabungan, lalu terapkan gain yang
+    /// sama ke semua channel (linked limiting) sambil menulis tail delay.
+    fn process_frame(&mut self, block: &mut AudioBlock<'_>, frame: usize) {
+        let mut frame_peak = 0.0_f32;
+        for channel_index in 0..self.delays.len() {
+            let sample = block
+                .channel(channel_index)
+                .expect("validated channel count")[frame];
+            frame_peak = frame_peak.max(sample.abs());
+        }
+
+        let detector = self.detector.as_mut().expect("limiter prepared");
+        let gain = detector.process_input_peak(frame_peak);
+        let delay_samples = self.latency_samples as f32;
+
+        for (channel_index, delay) in self.delays.iter_mut().enumerate() {
+            let input = block
+                .channel(channel_index)
+                .expect("validated channel count")[frame];
+            delay.push(input);
+            let delayed = delay.read_delay(delay_samples, InterpolationType::None);
+            let limited = (delayed * gain).clamp(-self.ceiling_linear, self.ceiling_linear);
+            block
+                .channel_mut(channel_index)
+                .expect("validated channel count")[frame] = limited;
         }
     }
 }
 
 impl AudioProcessor for LimiterProcessor {
     fn prepare(&mut self, spec: AudioSpec) -> Result<(), EngineError> {
-        self.latency_samples = (self.lookahead_ms * 0.001 * spec.sample_rate)
-            .round()
-            .max(1.0) as usize;
-        self.pending_flush_samples = self.latency_samples;
-        self.processors = (0..spec.channels)
-            .map(|_| {
-                BrickwallLimiter::new(
-                    spec.sample_rate,
-                    self.ceiling_db,
-                    self.release_ms,
-                    self.lookahead_ms,
-                )
-            })
+        let detector = LookaheadDetector::new(
+            spec.sample_rate,
+            self.ceiling_db,
+            self.release_ms,
+            self.lookahead_ms,
+        );
+        self.latency_samples = detector.latency_samples();
+        self.ceiling_linear = detector.ceiling_linear();
+        self.delays = (0..spec.channels)
+            .map(|_| DelayLine::new(self.latency_samples + LIMITER_DELAY_HEADROOM))
             .collect();
+        self.detector = Some(detector);
+        self.pending_flush_samples = self.latency_samples;
         Ok(())
     }
 
     fn process(&mut self, block: &mut AudioBlock<'_>) -> Result<(), EngineError> {
-        if block.channels() != self.processors.len() {
+        if block.channels() != self.delays.len() {
             return Err(EngineError::ChannelCountMismatch {
-                expected: self.processors.len(),
+                expected: self.delays.len(),
                 actual: block.channels(),
             });
         }
         self.pending_flush_samples = self.latency_samples;
-        for (index, processor) in self.processors.iter_mut().enumerate() {
-            let channel = block
-                .channel_mut(index)
-                .expect("channel count was validated");
-            processor.process_buffer(channel);
+        for frame in 0..block.frames() {
+            self.process_frame(block, frame);
         }
         Ok(())
     }
 
     fn reset(&mut self) {
-        for processor in &mut self.processors {
-            processor.reset();
+        for delay in &mut self.delays {
+            delay.clear();
+        }
+        if let Some(detector) = self.detector.as_mut() {
+            detector.reset();
         }
         self.pending_flush_samples = self.latency_samples;
     }
@@ -428,9 +472,9 @@ impl AudioProcessor for LimiterProcessor {
     }
 
     fn flush(&mut self, block: &mut AudioBlock<'_>) -> Result<usize, EngineError> {
-        if block.channels() != self.processors.len() {
+        if block.channels() != self.delays.len() {
             return Err(EngineError::ChannelCountMismatch {
-                expected: self.processors.len(),
+                expected: self.delays.len(),
                 actual: block.channels(),
             });
         }
@@ -439,15 +483,15 @@ impl AudioProcessor for LimiterProcessor {
         }
 
         let frames_to_flush = block.frames().min(self.pending_flush_samples);
-        for ch in 0..self.processors.len() {
-            let channel_slice = block.channel_mut(ch).expect("validated channel count");
-            let limiter = &mut self.processors[ch];
-            for sample in channel_slice[..frames_to_flush].iter_mut() {
-                *sample = limiter.process_sample(0.0);
-            }
-            for sample in channel_slice[frames_to_flush..].iter_mut() {
-                *sample = 0.0;
-            }
+        for channel_index in 0..self.delays.len() {
+            block
+                .channel_mut(channel_index)
+                .expect("validated channel count")
+                .fill(0.0);
+        }
+        // Input senyap: delay line mengeluarkan tail, detektor tetap ter-link.
+        for frame in 0..frames_to_flush {
+            self.process_frame(block, frame);
         }
         self.pending_flush_samples -= frames_to_flush;
         Ok(frames_to_flush)
@@ -663,5 +707,59 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn limiter_links_channels_to_the_loudest_peak() {
+        let spec = AudioSpec::new(SAMPLE_RATE, 2).expect("spec stereo");
+        let mut left = vec![0.1_f32; 512];
+        let mut right = vec![0.5_f32; 512];
+        let mut channel_views: Vec<&mut [f32]> = vec![&mut left, &mut right];
+        let mut block = AudioBlock::new(&mut channel_views).expect("block");
+
+        let mut limiter = LimiterProcessor::new(-12.0, 50.0, LIMITER_LOOKAHEAD_MS);
+        limiter.prepare(spec).expect("prepare limiter");
+        limiter.process(&mut block).expect("process");
+
+        let ceiling = Gain::db_to_linear(-12.0);
+        let expected_gain = ceiling / 0.5;
+        let steady_frame = 400;
+
+        assert!(
+            (right[steady_frame] - 0.5 * expected_gain).abs() < 1e-3,
+            "channel kanan: {}",
+            right[steady_frame]
+        );
+        assert!(
+            (left[steady_frame] - 0.1 * expected_gain).abs() < 1e-3,
+            "channel kiri: {}",
+            left[steady_frame]
+        );
+        // Rasio antar channel terjaga: stereo image tidak bergeser.
+        let ratio = left[steady_frame] / right[steady_frame];
+        assert!((ratio - 0.2).abs() < 1e-3, "rasio kiri/kanan {ratio}");
+    }
+
+    #[test]
+    fn limiter_processor_ceiling_holds_for_percussive_input() {
+        let mut samples = vec![0.0_f32; 1_000];
+        for index in [100, 300, 301, 700] {
+            samples[index] = 0.95;
+        }
+        let mut channel_views: Vec<&mut [f32]> = vec![&mut samples];
+        let mut block = AudioBlock::new(&mut channel_views).expect("block");
+
+        let mut limiter =
+            LimiterProcessor::new(LIMITER_CEILING_DB, LIMITER_RELEASE_MS, LIMITER_LOOKAHEAD_MS);
+        limiter.prepare(audio_spec()).expect("prepare limiter");
+        limiter.process(&mut block).expect("process");
+
+        let peak = samples
+            .iter()
+            .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
+        assert!(
+            peak <= Gain::db_to_linear(LIMITER_CEILING_DB) + 1e-6,
+            "peak {peak} melampaui ceiling"
+        );
     }
 }

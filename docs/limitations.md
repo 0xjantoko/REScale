@@ -6,33 +6,37 @@ Honest status of current issues, workarounds, and planned fixes. This document s
 
 ## Critical Issues
 
-### 1. Limiter Hard Clamp ⚠️ HIGH
+### 1. Limiter Hard Clamp ⚠️ HIGH — ✅ FIXED (unreleased)
 
-**Status:** Active — on roadmap  
+**Status:** ✅ Fixed (unreleased)  
 **Severity:** High (audio distortion)
 
-Limiter protects ceiling with final hard clamp rather than proper sliding max-hold gain reduction. Gain reduction is derived from exponential envelope (0.1 ms attack) instead of true sliding maximum over lookahead window.
+~~Limiter protects ceiling with final hard clamp rather than proper sliding max-hold gain reduction. Gain reduction is derived from exponential envelope (0.1 ms attack) instead of true sliding maximum over lookahead window.~~
 
-**Symptoms:** Sustained material limited cleanly; percussive transients attenuated too little then clipped.
+The limiter now derives gain reduction from the **sliding maximum absolute peak over the full lookahead window** (monotonic-deque `SlidingMax`, zero allocation). Attack is instantaneous so a new peak in the window is never allowed through, release is exponentially smoothed with a min-hold, and the hard clamp remains only as a floating-point safety net — it is no longer part of the gain law.
 
-**Workaround:** Use lower target dBFS values (-2 or -3 instead of -0.5). Avoid mastering heavily compressed sources.
+**Symptoms:** ~~Sustained material limited cleanly; percussive transients attenuated too little then clipped.~~ Resolved — the ceiling holds on percussive material (regression test).
 
-**Fix path:** Implement sliding max-hold algorithm tracking maximum gain reduction across entire lookahead window.
+**Workaround:** ~~Use lower target dBFS values (-2 or -3 instead of -0.5). Avoid mastering heavily compressed sources.~~ No longer needed.
+
+**Fix path:** ~~Implement sliding max-hold algorithm tracking maximum gain reduction across entire lookahead window.~~ Done.
 
 ---
 
-### 2. No Latency Compensation ⚠️ HIGH
+### 2. No Latency Compensation ⚠️ HIGH — ✅ FIXED (unreleased)
 
-**Status:** Active — on roadmap  
+**Status:** ✅ Fixed (unreleased)  
 **Severity:** High (timing shift)
 
-CLI processes whole file as single block; `flush()` never called. Output time-shifted by limiter lookahead (~2 ms default) with lookahead tail truncated. Streaming reader/writer path not wired into CLI yet.
+~~CLI processes whole file as single block; `flush()` never called. Output time-shifted by limiter lookahead (~2 ms default) with lookahead tail truncated. Streaming reader/writer path not wired into CLI yet.~~
 
-**Symptoms:** Output misaligned with input by ~2ms; transient onset slightly delayed.
+The CLI now streams through `WavStreamReader` → processor chain → `WavStreamWriter`: it calls `flush()` at EOF and discards the first `latency_samples` output frames, so the output frame count equals the input and the master is no longer time-shifted. Covered by an integration test that compares frame counts and measures latency compensation end-to-end.
 
-**Workaround:** Manual sample-level alignment using DAW transport sync markers. Future: CLI will compensate automatically via streaming I/O path.
+**Symptoms:** ~~Output misaligned with input by ~2ms; transient onset slightly delayed.~~ Resolved.
 
-**Fix path:** Route CLI through `WavStreamReader`/`WavStreamWriter` loop, call `flush()` at EOF, offset output frames by `chain.latency_samples()`.
+**Workaround:** ~~Manual sample-level alignment using DAW transport sync markers. Future: CLI will compensate automatically via streaming I/O path.~~ No longer needed.
+
+**Fix path:** ~~Route CLI through `WavStreamReader`/`WavStreamWriter` loop, call `flush()` at EOF, offset output frames by `chain.latency_samples()`.~~ Done.
 
 ---
 
@@ -64,16 +68,18 @@ Delay line returns one sample short of nominal delay: `read_delay(n)` yields sam
 
 ---
 
-### 5. No Stereo Linking
+### 5. No Stereo Linking — ✅ FIXED (unreleased)
 
-**Status:** Design limitation — on roadmap  
+**Status:** ✅ Fixed (unreleased)  
 **Severity:** Medium (panning shift)
 
-Compressor and limiter maintain independent per-channel state. Heavy limiting compresses one channel more than the other, shifting stereo image toward less-compressed side.
+~~Compressor and limiter maintain independent per-channel state. Heavy limiting compresses one channel more than the other, shifting stereo image toward less-compressed side.~~
 
-**Symptoms:** Source panned center appears to drift during heavy limiting on asymmetric material (e.g., mono vocals with stereo pad).
+The limiter now uses a single shared `LookaheadDetector` driven by the loudest channel peak, and applies the same gain reduction to every channel (stereo-linked limiting), so the stereo image no longer drifts. The compressor still keeps per-channel state; linked compressor detection and mid/side processing remain on the roadmap.
 
-**Fix path:** Implement linked detection where gain reduction for both channels derives from whichever has higher instantaneous compression ratio.
+**Symptoms:** ~~Source panned center appears to drift during heavy limiting on asymmetric material.~~ Resolved for the limiter.
+
+**Fix path:** ~~Implement linked detection where gain reduction for both channels derives from whichever has higher instantaneous compression ratio.~~ Done for the limiter.
 
 ---
 
@@ -90,18 +96,20 @@ RMS envelope release time runs approximately 2× slower than configured value be
 
 ---
 
-### 7. Unvalidated Filter Parameters
+### 7. Unvalidated Filter Parameters — ✅ FIXED (unreleased)
 
-**Status:** Security/safety gap  
+**Status:** ✅ Fixed (unreleased)  
 **Severity:** Medium (potential instability)
 
-No guards against denormal numbers, NaN, or Inf in audio path. Filter parameters like `f0 >= fs/2` or `q <= 0` produce unstable coefficients — oscillator behavior, runaway amplification.
+~~No guards against denormal numbers, NaN, or Inf in audio path. Filter parameters like `f0 >= fs/2` or `q <= 0` produce unstable coefficients — oscillator behavior, runaway amplification.~~
 
-**Symptoms:** Output contains DC offset, clipping artifacts, or silent periods interspersed with noise bursts.
+Filter constructors now clamp frequency into `(0, Nyquist)`, force `q > 0`, clamp EQ gain to ±40 dB and fall back to 48 kHz for invalid sample rates. The engine additionally sanitises its output (`safety::sanitize_block`): NaN/Inf become silence and denormals are flushed to zero.
 
-**Workaround:** Validate inputs before constructing processors. Never feed untrusted parameter values directly from user input.
+**Symptoms:** ~~Output contains DC offset, clipping artifacts, or silent periods interspersed with noise bursts.~~ Prevented at construction and at the engine boundary.
 
-**Fix path:** Add parameter validation clamps in constructor functions; denormal flusher on DSP buffers.
+**Workaround:** ~~Validate inputs before constructing processors.~~ No longer required, but still recommended for custom coefficients.
+
+**Fix path:** ~~Add parameter validation clamps in constructor functions; denormal flusher on DSP buffers.~~ Done.
 
 ---
 
@@ -135,11 +143,15 @@ Terminal UI code lives inside the DSP crate, forcing core dependency on `std` th
 
 ---
 
-### 12. CLI Has No Automated Tests
+### 12. CLI Has No Automated Tests — ✅ FIXED (unreleased)
 
-Only library components have tests. CLI binary relies on manual verification. Edge cases in argument parsing, file handling, and error reporting go undetected until integration testing.
+**Status:** ✅ Fixed (unreleased)
 
-**Planned fix:** Add CLI-specific test harness in CI that exercises all command combinations.
+~~Only library components have tests. CLI binary relies on manual verification. Edge cases in argument parsing, file handling, and error reporting go undetected until integration testing.~~
+
+The CLI now has an integration suite (`crates/rescale-cli/tests/cli.rs`, 9 tests) that runs the real binary and covers mastering latency compensation, pristine sample-accuracy, bit-depth handling, missing/unsupported input, out-of-range targets, unknown arguments, overwrite refusal and `--help`.
+
+**Planned fix:** ~~Add CLI-specific test harness in CI that exercises all command combinations.~~ Done.
 
 ---
 
@@ -158,10 +170,10 @@ Only library components have tests. CLI binary relies on manual verification. Ed
 
 | Severity | Count | Fix ETA |
 |----------|-------|---------|
-| Critical (blocks production use) | 2 | Next minor release |
+| Critical (blocks production use) | 0 | — (fixed in unreleased) |
 | Bug (confirmed, needs fix) | 0 | — (fixed in unreleased) |
-| Design limitation (on roadmap) | 3 | Phased rollout |
-| Minor / cosmetic | 5 | Best-effort |
+| Design limitation (on roadmap) | 2 | Phased rollout |
+| Minor / cosmetic | 4 | Best-effort |
 
 ---
 

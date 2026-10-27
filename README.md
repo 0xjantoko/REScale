@@ -69,7 +69,7 @@ docs/             # All documentation guides
 cargo fmt --all --check                              # ✅ clean
 cargo clippy --workspace --all-targets --locked -- -D warnings   # ✅ clean
 cargo build  --workspace --all-targets --locked                  # ✅ 0 warnings
-cargo test   --workspace --all-targets --locked                  # ✅ 21/21 pass
+cargo test   --workspace --all-targets --locked                  # ✅ 58/58 pass (49 core + 9 CLI)
 ```
 
 **MSRV: Rust 1.78** — verified in CI. Lockfile v4.

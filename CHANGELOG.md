@@ -28,24 +28,49 @@ Until `1.0.0`, minor releases may contain breaking changes to the public API.
 - RMS `EnvelopeFollower` time constants: smoothing now compensates for the power
   domain (`r²` for RMS mode), so release matches the configured value instead of
   running roughly 2× slower.
+- CLI streaming: `rescale-cli` now reads and writes block by block through
+  `WavStreamReader`/`WavStreamWriter`, calls `flush()` at end-of-stream and
+  discards the first `latency_samples` output frames. The master therefore has
+  the same frame count as the input and is no longer time-shifted; peak
+  normalisation uses a read-only first pass so behaviour stays global.
+- CLI parser: unrecognised long flags are reported as unknown arguments instead
+  of being swallowed as the positional target dBFS.
+- Limiter rewritten: gain reduction now comes from a sliding maximum-hold over
+  the full lookahead window (`SlidingMax`, monotonic deque, zero allocation).
+  Attack is instantaneous, release is smoothed with a min-hold, and the hard
+  clamp is only a floating-point safety net — percussive transients no longer
+  clip.
+- Stereo-linked limiting: `LimiterProcessor` shares one `LookaheadDetector`
+  driven by the loudest channel peak and applies the same gain reduction to
+  every channel, so the stereo image no longer drifts under heavy limiting.
+- Filter parameters are validated: frequency clamped into `(0, Nyquist)`, `q`
+  forced positive, EQ gain clamped to ±40 dB, and invalid sample rates fall back
+  to 48 kHz.
+- Engine output is sanitised (`safety::sanitize_block`): NaN/Inf become silence
+  and denormals are flushed to zero.
 
 ### Added
 - Regression tests for block sizes 64, 256 and 1024 frames proving block-wise
   rendering equals single-block rendering (including the flushed tail), plus
   unit tests for delay-line semantics, envelope release timing and multi-stage
-  chain flush. Test suite: 32 passing.
+  chain flush.
+- CLI integration suite (`crates/rescale-cli/tests/cli.rs`, 9 tests) running the
+  real binary: latency-compensated mastering, pristine sample accuracy, bit
+  depth, missing/unsupported input, out-of-range target, overwrite refusal,
+  unknown argument and `--help`.
+- Public exports: `LookaheadDetector`, `SlidingMax`, and safety helpers
+  (`sanitize_sample`, `sanitize_buffer`, `sanitize_block`).
+- Limiter tests: sliding-window maximum tracker (brute-force cross-check),
+  detector gain law, percussive ceiling, look-ahead attack timing, stereo-linked
+  gain, and parameter-validation tests. Test suite: 58 passing (49 core + 9 CLI).
 
 ### Planned
-- Rewrite the brickwall limiter: sliding maximum-hold gain reduction over the
-  lookahead window, min-hold gain smoothing, stereo-linked detection; the hard
-  clamp becomes a last-resort safety net instead of part of the gain law.
-- Route `rescale-cli` through `WavStreamReader`/`WavStreamWriter`, call
-  `flush()`, and compensate `latency_samples()` so output is not time-shifted.
+- Compressor: linked detection (gain reduction follows the louder channel) and
+  mid/side processing support.
+- True-peak limiting with 2×/4× oversampling (depends on the new limiter).
+- Sample-rate conversion and LUFS (EBU R128) measurement.
 - Move MP3 support behind an optional Cargo feature so the default build needs
   neither crates nor an external `ffmpeg` binary.
-- First automated tests for `rescale-cli`.
-- Validation and sanitisation: filter parameter checks, NaN/Inf guards, denormal
-  handling.
 
 ## [0.1.0] - 2026-09-24
 

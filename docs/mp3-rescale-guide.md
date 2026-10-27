@@ -55,7 +55,7 @@ cargo run --bin rescale_cli -- "rekaman.wav" -1.0
 3. **ReScaling**:
    - **Peak normalization**: raises the signal level to the desired dBFS target.
    - **Soft-knee dynamic compressor**: evens out the dynamic range so quiet passages are lifted and loud passages are controlled without distortion.
-   - **Lookahead brickwall limiter**: keeps the output under the ceiling, but in v0.1.0 the last part of that protection comes from a final hard clamp (residual transient overshoot) rather than from an exact sliding-maximum gain reduction; see *Known limitations* in the README.
+   - **Lookahead brickwall limiter**: keeps the output under the ceiling using a sliding max-hold gain law over the lookahead window, with stereo-linked detection; the final clamp is only a floating-point safety net.
 4. **Output**:
    - Writes `REScale-<input_name>.wav` (24-bit default + TPDF dither; or via `--bit-depth 16/24/32f`).
    - Writes `REScale-<input_name>.mp3` (320 kbps via ffmpeg, when the input is MP3).

@@ -7,23 +7,23 @@ Planned improvements, feature additions, and architectural evolution for REScale
 ## Phase 1: Core Stability (Next Release)
 
 ### Fix Limiter Algorithm
-- [ ] Replace hard clamp with sliding max-hold gain reduction
-- [ ] True maximum detection across lookahead window
-- [ ] Eliminate transient clipping on percussive material
+- [x] Replace hard clamp with sliding max-hold gain reduction
+- [x] True maximum detection across lookahead window
+- [x] Eliminate transient clipping on percussive material
 - **Impact:** Critical — removes primary audio quality bottleneck
 - **Effort:** High (requires algorithmic redesign + testing)
 
 ### Stereo Linking
 - [ ] Compressor: linked detection (gain reduction follows louder channel)
-- [ ] Limiter: independent per-channel processing with linked ceiling protection
+- [x] Limiter: independent per-channel processing with linked ceiling protection
 - [ ] Mid/side processing support for stereo-aware mastering
 - **Impact:** Medium — fixes panning drift during heavy compression
 - **Effort:** Medium
 
 ### Streaming I/O Integration
-- [ ] Route CLI through `WavStreamReader`/`WavStreamWriter` block loop
-- [ ] Implement `flush()` call at end-of-stream
-- [ ] Compensate output frame offset by `chain.latency_samples()`
+- [x] Route CLI through `WavStreamReader`/`WavStreamWriter` block loop
+- [x] Implement `flush()` call at end-of-stream
+- [x] Compensate output frame offset by `chain.latency_samples()`
 - **Impact:** High — eliminates ~2ms time shift, restores lookahead tail
 - **Effort:** Medium
 
@@ -37,6 +37,7 @@ Planned improvements, feature additions, and architectural evolution for REScale
 - [x] `DelayLine` off-by-one: `read_delay(n)` is relative to the last pushed sample; pre-push readers use `read_delay_before_push`
 - [x] RMS envelope time constants: release now matches the configured value (power-domain correction)
 - [x] Multi-stage chain flush covered by regression tests (chain tail = sum of stage latencies)
+- [x] CLI integration tests (`crates/rescale-cli/tests/cli.rs`) for flag combinations, error paths and latency compensation
 - **Impact:** High — removes silent tail loss and timing drift in the DSP core
 - **Effort:** Low (completed)
 
@@ -67,9 +68,9 @@ Planned improvements, feature additions, and architectural evolution for REScale
 - **Effort:** Medium (requires integration with existing limiter)
 
 ### Parameter Validation & Safety
-- [ ] Denormal flusher on DSP buffers
-- [ ] NaN / Inf guards throughout audio path
-- [ ] Filter parameter clamping (f0 < fs/2, q > 0)
+- [x] Denormal flusher on DSP buffers
+- [x] NaN / Inf guards throughout audio path
+- [x] Filter parameter clamping (f0 < fs/2, q > 0)
 - [ ] Configurable panic/handle mode for invalid inputs
 - **Impact:** Medium — prevents instability from untrusted parameters
 - **Effort:** Low-Medium

@@ -122,6 +122,9 @@ Terminal UI renders VU meters, spectrum analyzer, and chain status using ANSI es
 - **Filename:** `REScale-<original_name>.wav` written adjacent to input
 - **Overwrite protection:** Existing output files are never silently overwritten
 - **Location:** Same directory as input file
+- **Streaming:** Input is processed block by block (constant memory) and the
+  lookahead latency is compensated, so the output has exactly the same frame
+  count as the input — no time shift and no truncated tail
 
 Example:
 ```

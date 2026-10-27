@@ -2,9 +2,9 @@
 
 ## Target: DSP audio engine + mastering CLI zero-dependency (pure Rust) | Architecture: Cargo workspace multi-crate (`rescale-core` library + `rescale-cli` binary)
 
-### Overall Progress: ✅ Stage 1–12 selesai (core workspace, publikasi v0.1.0, stabilisasi DSP Sprint 1) | ⬜ Stage 13+ mengikuti `docs/roadmap.md`
+### Overall Progress: ✅ Stage 1–14 selesai (core workspace, publikasi v0.1.0, stabilisasi DSP, streaming CLI, limiter baru) | ⬜ Stage 15+ mengikuti `docs/roadmap.md`
 
-> Terakhir diperbarui: sesi stabilisasi DSP Sprint 1 (September 2026). Status quality gate diverifikasi ulang: **32/32 test pass**, clippy `-D warnings` 0 issue, fmt clean, build 0 warning.
+> Terakhir diperbarui: sesi Sprint 2B — rewrite limiter + stereo linking + validasi (September 2026). Status quality gate diverifikasi ulang: **58/58 test pass** (49 core + 9 CLI), clippy `-D warnings` 0 issue, fmt clean, build 0 warning.
 
 ---
 
@@ -51,7 +51,7 @@
 - [x] Implementasi `Compressor` (Soft-Knee quadratic gain computer, threshold, ratio, makeup gain).
 - [x] Implementasi `BrickwallLimiter` (Lookahead delay buffer).
 - [x] Unit test kompresi sinyal, verifikasi batas ceiling limiter, dan Full Mastering Chain pipeline.
-- [ ] **Utang teknis:** gain reduction limiter diturunkan dari envelope eksponensial, bukan sliding maximum-hold — lihat `docs/limitations.md` #1.
+- [x] **Utang teknis:** gain reduction limiter diturunkan dari envelope eksponensial, bukan sliding maximum-hold — lihat `docs/limitations.md` #1. *(Diselesaikan di Stage 14.)*
 
 ---
 
@@ -142,7 +142,7 @@ Menerbitkan REScale sebagai proyek open source `v0.1.0` — publik, dapat diaudi
 - [x] Repo publik [`github.com/0xjantoko/REScale`](https://github.com/0xjantoko/REScale) — commit awal, tag `v0.1.0`, **GitHub Release** dengan notes dari CHANGELOG.
 - [x] Metadata crates.io lengkap di `rescale-core` (`repository`, `documentation`, `readme`, `rust-version`); `rescale-cli` menyatakan `publish = false`.
 - [x] CI 3 job: **Quality gate** (Linux+Windows: fmt, clippy `-D warnings`, rustdoc `-D warnings`, build, test), **MSRV 1.78**, dan **Zero-dependency policy** (`cargo tree` gate, locked offline build, grep `unsafe` di core, larangan vendor/patch/git dependency).
-- [x] Quality gate terverifikasi ulang: **21/21 test pass**, clippy 0 issue, fmt clean, build 0 warning, `cargo tree` hanya berisi 2 crate workspace.
+- [x] Quality gate terverifikasi ulang (saat stage ini ditutup): **21/21 test pass**, clippy 0 issue, fmt clean, build 0 warning, `cargo tree` hanya berisi 2 crate workspace.
 - [x] Berkas tata kelola: `CHANGELOG.md` (Keep a Changelog + SemVer), `SECURITY.md`, 3 issue template, `.github/dependabot.yml`, `.editorconfig`, `.gitattributes`, `LICENSE-MIT` + `LICENSE-APACHE` (dual license).
 - [x] Dokumentasi kanonik di `docs/`: quickstart, cli-reference, api, architecture, limitations, roadmap, implementation-guide, math-foundation, mp3-rescale-guide, tui-guide, project-analysis; README ringkas + tabel navigasi.
 - [x] Konsolidasi dokumentasi: arsipkan duplikat historis (`architecture-roadmap`, `engine-roadmap`, `usage-guide`) ke `private/archived/` (gitignored), perbaiki tautan rusak `quickstart → api.md`, dan tautkan seluruh dokumen kanonik dari README.
@@ -177,7 +177,7 @@ Menutup bug kebenaran di core DSP sebelum rilis berikutnya: kehilangan tail pada
 - [x] RMS envelope: koefisien domain power dikoreksi (`r²`), release sesuai nilai konfigurasi (sebelumnya ~2× lebih lambat).
 - [x] Regression test skala blok 64/256/1024 frame: output block-wise identik dengan single-block, termasuk tail hasil flush.
 - [x] Unit test baru: semantik delay (integer/fractional/pre-push/process_sample), waktu release envelope (Peak & RMS), flush chain dengan prefix processor dan dua stage berlatency, flush chain tanpa latency.
-- [x] Quality gate terverifikasi: `cargo fmt --check` clean, `cargo clippy -D warnings` 0 issue, `cargo test` **32/32 pass**.
+- [x] Quality gate terverifikasi (saat stage ini ditutup): `cargo fmt --check` clean, `cargo clippy -D warnings` 0 issue, `cargo test` **32/32 pass**.
 ### Komponen
 - `crates/rescale-core/src/engine.rs` — `ProcessorChain::flush`, penghitung tail, helper `process_stages`, modul test chain
 - `crates/rescale-core/src/buffer/delay_line.rs` — semantik delay + interpolasi + test
@@ -190,12 +190,57 @@ Menutup bug kebenaran di core DSP sebelum rilis berikutnya: kehilangan tail pada
 
 ---
 
+## Stage 13: Sprint 2A — Streaming CLI & Kompensasi Latency (Selesai)
+### Tujuan
+Menghapus time-shift dan tail terpotong pada output CLI dengan memindahkan jalur pemrosesan ke streaming block, lalu mengunci perilakunya lewat integration test CLI.
+### Deliverables
+- [x] CLI membaca input via `WavStreamReader` per blok (pass 1: analisis header + level; pass 2: proses + tulis), tanpa memuat seluruh file ke RAM.
+- [x] Pemrosesan per blok melalui `ProcessorChain` + gain normalisasi linier (presisi penuh), hasil ditulis via `WavStreamWriter`.
+- [x] Kompensasi latency: `latency_samples` frame awal dibuang dan `flush()` dipanggil di EOF sehingga jumlah frame output = jumlah frame input.
+- [x] Parser CLI: flag panjang tak dikenal dilaporkan "Unknown argument" (tidak lagi tertelan sebagai target dBFS).
+- [x] `tests/cli.rs` — 9 integration test zero-dep (`std::process::Command`) untuk mastering, pristine, bit-depth, error path, overwrite, dan `--help`.
+- [x] Quality gate: fmt clean, clippy `-D warnings` 0 issue, **41 test pass** (32 core + 9 CLI).
+### Komponen
+- `crates/rescale-cli/src/bin/rescale_cli.rs` — pipeline streaming, metrik output, kompensasi latency
+- `crates/rescale-cli/tests/cli.rs` — integration test CLI
+### Konsep
+- **Dua pass tanpa menahan memori**: pass-1 mengukur, pass-2 memproses; normalisasi peak tetap global (identik perilaku lama) tanpa menyimpan audio.
+- **Kompensasi latency eksplisit**: buang frame awal lalu drain tail = output sepanjang input.
+- **Zero-dependency**: test memakai `std` + crate workspace, tanpa `assert_cmd`/`tempfile`.
+
+---
+
+## Stage 14: Sprint 2B — Rewrite Limiter, Stereo Linking & Validasi (Selesai)
+### Tujuan
+Mengganti limiter berbasis envelope dengan sliding max-hold sejati, membuat deteksinya ter-link antar channel, dan menutup celah keamanan parameter — semua zero-dependency.
+### Deliverables
+- [x] `SlidingMax` baru (`drc/max_hold.rs`): monotonic deque zero-alloc, O(1) amortisasi, diuji terhadap brute-force.
+- [x] `LookaheadDetector` baru (`drc/limiter.rs`): gain dari sliding maximum window lookahead (L+1 sampel), attack instan, release eksponensial + min-hold.
+- [x] `BrickwallLimiter` ditulis ulang memakai `LookaheadDetector` + `DelayLine`; hard clamp hanya jaring pengaman f32; latency fisik = `latency_samples()`.
+- [x] `LimiterProcessor` memakai satu detektor bersama → **stereo-linked limiting** (gain dari channel terkeras, diterapkan ke semua channel).
+- [x] Validasi parameter filter (`BiquadCoefficients`): frekuensi diklem `(0, Nyquist)`, `q > 0`, gain EQ ±40 dB, sampling rate invalid → 48 kHz.
+- [x] Modul `safety.rs`: guard NaN/Inf + flush denormal pada boundary `ProcessorChain`.
+- [x] Test baru: max-hold (3), detektor/limiter (4), linked stereo + ceiling percussive (2), validasi koefisien (5), safety (3).
+- [x] Quality gate: fmt clean, clippy `-D warnings` 0 issue, **58 test pass** (49 core + 9 CLI).
+### Komponen
+- `crates/rescale-core/src/drc/max_hold.rs` — sliding maximum tracker
+- `crates/rescale-core/src/drc/limiter.rs` — `LookaheadDetector` + `BrickwallLimiter`
+- `crates/rescale-core/src/engine.rs` — `LimiterProcessor` linked + sanitasi chain
+- `crates/rescale-core/src/filter/coefficients.rs` — validasi parameter
+- `crates/rescale-core/src/safety.rs` — sanitasi NaN/Inf/denormal
+### Konsep
+- **Deteksi dipisah dari delay audio**: satu detektor bisa melayani banyak channel → linked limiting tanpa duplikasi state.
+- **Sliding max instan**: begitu puncak masuk window, gain turun sebelum puncak sampai output; release min-hold mencegah pompa.
+- **Pertahanan berlapis**: validasi di konstruktor + sanitasi di boundary engine + clamp f32 sebagai jaring terakhir.
+
+---
+
 ## 🏆 Status Engine (verifikasi terakhir)
 
 - **Arsitektur**: Cargo workspace multi-crate — `rescale-core` (engine DSP, zero dependency) + `rescale-cli` (binary & examples). Keputusan arsitektur tercatat di [`docs/architecture.md`](docs/architecture.md).
 - **Modul DSP**: 14 modul di `rescale-core` — gain, normalize, convert, limiter, buffer (3), filter (3), drc (3), fft (3), wav (4), engine, tui (2).
 - **Dependency**: 0 external crates (pure standard library); `Cargo.lock` di-commit; diverifikasi `cargo tree` + CI.
-- **Test Suite**: **32 test** lulus (100% passing) — termasuk regression test blok 64/256/1024, semantik delay line, waktu release envelope, dan flush chain multi-stage.
+- **Test Suite**: **58 test** lulus (100% passing) — 49 unit test core (max-hold, limiter linked, validasi koefisien, safety, regression blok 64/256/1024, semantik delay, envelope, flush multi-stage) + 9 integration test CLI.
 - **Quality Gate**: build 0 error, clippy `-D warnings` 0 issue, fmt clean, rustdoc `-D warnings` 0 issue.
 - **Performance Budget**: full mastering chain + WAV I/O, 3.4 menit audio stereo (44.1 kHz) = 0.170 detik (release). Hot path zero-allocation (streaming per-block, buffer pre-sized).
 - **Streaming Ready**: I/O WAV streaming per block tanpa memuat seluruh file ke RAM.

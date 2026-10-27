@@ -95,7 +95,7 @@ Configuration:
 | `release_ms` | `10.0` … `1000.0` | `80.0` ms | Release time |
 | `makeup_gain_db` | `0.0` … `36.0` | `0.0` | Post-compression gain |
 
-**⚠️ Limitation:** Release is ~2× slower than configured due to power-domain smoothing. No stereo linking — independent per-channel state.
+**Limitation:** Release smoothing now matches the configured time constant (power-domain correction). Compressor keeps per-channel state; the limiter uses stereo-linked detection.
 
 ### Lookahead Limiter
 
@@ -107,7 +107,7 @@ Brickwall ceiling protection with configurable lookahead window.
 | `lookahead_ms` | `0.1` … `50.0` | `2.0` ms | Lookahead window |
 | `attack_ms` | `0.01` … `50.0` | `0.1` ms | Envelope attack |
 
-**⚠️ Limitation:** Uses hard clamp for ceiling protection. Gain reduction from exponential envelope, not true sliding max-hold. Transients may attenuate insufficiently then clip. Latency compensation not wired into CLI yet.
+**Limitation:** ~~Uses hard clamp for ceiling protection. Gain reduction from exponential envelope, not true sliding max-hold. Transients may attenuate insufficiently then clip. Latency compensation not wired into CLI yet.~~ Resolved in the unreleased version: gain reduction comes from a sliding max-hold over the lookahead window, detection is stereo-linked, and the CLI compensates latency.
 
 ---
 

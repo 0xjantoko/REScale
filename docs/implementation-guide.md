@@ -246,7 +246,7 @@ fn main() {
 
 ---
 
-## Test Suite (21/21 Passing)
+## Test Suite (58/58 Passing — 49 core + 9 CLI integration)
 
 | Test | Verification |
 |---|---|
@@ -271,3 +271,13 @@ fn main() {
 | `test_fft_magnitude_spectrum_has_nyquist_bin` | `len / 2 + 1` bins (DC … Nyquist) |
 | `test_fft_forward_rejects_non_power_of_two` | Panics on a 100-sample FFT |
 | `test_full_mastering_chain_pipeline` | Full EQ→Comp→Limit→WAV pipeline |
+| `engine::flush_*` (3 tests) | Chain tail drained for any stage order and multiple latency stages |
+| `engine::block_size_does_not_change_output` | 64/256/1024-frame blocks equal single-block render |
+| `delay_line::*` (4 tests) | Post-push delay semantics, fractional interpolation, pre-push variant |
+| `envelope::*` (3 tests) | Peak/RMS release time constants match the configured value |
+| `cli.rs` (9 integration tests) | Real binary: latency compensation, pristine accuracy, bit depth, error paths |
+| `max_hold::*` (3 tests) | Sliding maximum: window tracking, brute-force cross-check, reset |
+| `limiter::*` (4 tests) | Detector gain law, percussive ceiling, pre-output attack, reset |
+| `engine::limiter_*` (2 tests) | Stereo-linked gain and percussive ceiling on the processor |
+| `coefficients::*` (5 tests) | Frequency/Q/gain validation, no NaN from invalid input |
+| `safety::*` (3 tests) | NaN/Inf guard and denormal flush |

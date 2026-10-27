@@ -9,12 +9,16 @@ pub mod filter;
 pub mod gain;
 pub mod limiter;
 pub mod normalize;
+pub mod safety;
 pub mod tui;
 pub mod wav;
 
 pub use buffer::{DelayLine, FeedbackDelay, InterpolationType, RingBuffer};
 pub use convert::SampleConvert;
-pub use drc::{BrickwallLimiter, Compressor, CompressorConfig, DetectionMode, EnvelopeFollower};
+pub use drc::{
+    BrickwallLimiter, Compressor, CompressorConfig, DetectionMode, EnvelopeFollower,
+    LookaheadDetector, SlidingMax,
+};
 pub use engine::{
     AudioBlock, AudioProcessor, AudioSpec, CompressorProcessor, EngineError, EqualizerProcessor,
     GainProcessor, LimiterProcessor, ProcessorChain,

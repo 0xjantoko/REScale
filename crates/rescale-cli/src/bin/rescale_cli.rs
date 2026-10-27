@@ -2,11 +2,11 @@
 
 use rescale_core::{
     AudioBlock, AudioProcessor, AudioSpec, CompressorConfig, CompressorProcessor, DetectionMode,
-    DitherMode, Gain, LimiterProcessor, Normalizer, ProcessorChain, TuiMenu, WavReader,
-    WavSampleFormat, WavWriteOptions, WavWriter,
+    DitherMode, Gain, LimiterProcessor, Normalizer, ProcessorChain, TuiMenu, WavSampleFormat,
+    WavStreamReader, WavStreamWriter, WavWriteOptions,
 };
 use std::env;
-use std::io::{self, stdout, Write};
+use std::io::{self, stdout, Read, Seek, Write};
 use std::path::Path;
 use std::process::Command;
 
@@ -154,6 +154,10 @@ impl CliOptions {
                         "tpdf" => DitherMode::Tpdf,
                         _ => return Err(format!("Unsupported dither mode: {value}")),
                     };
+                }
+                // Flag panjang tak dikenal tidak boleh ditelan sebagai target dBFS.
+                value if value.starts_with("--") => {
+                    return Err(format!("Unknown argument: {value}"))
                 }
                 value if !target_was_set => {
                     options.target_dbfs = value
@@ -314,119 +318,96 @@ fn run_rescale(options: &CliOptions) -> Result<(), Box<dyn std::error::Error>> {
         &options.input_file
     };
 
-    // --- Langkah 2: Baca binary WAV stream ---
-    log_step(2, 5, "Reading binary audio stream...");
-    let (header, mut channels) = WavReader::read_from_file(wav_source).map_err(|e| {
-        eprintln!("\x1b[1;31m[ERROR]\x1b[0m Failed to read WAV file: {}", e);
-        e
-    })?;
-    let sample_rate = header.sample_rate as f32;
-
-    println!(
-        "         \x1b[90m{} Hz | {} Ch | {} samples/ch\x1b[0m",
-        header.sample_rate, header.num_channels, header.num_samples_per_channel
+    // --- Langkah 2: Analisis awal (pass 1, read-only) ---
+    log_step(
+        2,
+        5,
+        "Reading audio stream (pass 1: header + level scan)...",
     );
+    let analysis = analyze_input(Path::new(wav_source))?;
+    log_ok(&format!(
+        "{} Hz | {} Ch | {} frames (~{:.2} s)",
+        analysis.sample_rate,
+        analysis.channels,
+        analysis.total_frames,
+        analysis.duration_seconds()
+    ));
 
     // --- Langkah 3: Analisis Level Awal ---
     log_step(3, 5, "Analyzing initial signal level and energy...");
-    let initial_peak = channels
-        .iter()
-        .map(|ch| Normalizer::find_peak(ch))
-        .fold(0.0_f32, f32::max);
-    let initial_rms = channels
-        .iter()
-        .map(|ch| Normalizer::calculate_rms(ch))
-        .fold(0.0_f32, f32::max);
     println!(
         "         \x1b[90mPeak: {:.4} ({:+.2} dBFS) | RMS: {:.4} ({:+.2} dBFS)\x1b[0m",
-        initial_peak,
-        Gain::linear_to_db(initial_peak),
-        initial_rms,
-        Gain::linear_to_db(initial_rms)
+        analysis.peak,
+        Gain::linear_to_db(analysis.peak),
+        analysis.rms,
+        Gain::linear_to_db(analysis.rms)
     );
 
-    // --- Langkah 4: DSP ReScaling Chain (bypass penuh di mode pristine) ---
-    let final_peak: f32;
-    let final_rms: f32;
-    if options.no_dsp {
+    if options.no_dsp && analysis.peak > 1.0 {
+        log_warn(&format!(
+            "Input peak {:.4} ({:+.2} dBFS) exceeds 0 dBFS - output is clamped to +/-1.0 when written.",
+            analysis.peak,
+            Gain::linear_to_db(analysis.peak)
+        ));
+    }
+
+    // --- Langkah 4: DSP ReScaling Chain + streaming write ---
+    let spec = AudioSpec::new(analysis.sample_rate as f32, analysis.channels)?;
+    let normalization_gain = if options.no_dsp {
         log_step(
             4,
             5,
             "Pristine mode (--no-dsp): normalize/compressor/limiter skipped...",
         );
-        if initial_peak > 1.0 {
-            log_warn(&format!(
-                "Input peak {:.4} ({:+.2} dBFS) exceeds 0 dBFS - output is clamped to +/-1.0 when written.",
-                initial_peak,
-                Gain::linear_to_db(initial_peak)
-            ));
-        }
-        final_peak = initial_peak;
-        final_rms = initial_rms;
-        println!(
-            "         \x1b[90mPeak: {:.4} ({:+.2} dBFS) | RMS: {:.4} ({:+.2} dBFS)\x1b[0m",
-            final_peak,
-            Gain::linear_to_db(final_peak),
-            final_rms,
-            Gain::linear_to_db(final_rms)
+        1.0
+    } else {
+        log_step(
+            4,
+            5,
+            "Processing DSP ReScaling Chain (streaming, latency-compensated)...",
         );
+        normalization_gain(&analysis, target_linear)
+    };
+
+    let mut chain = if options.no_dsp {
+        None
+    } else {
+        Some(build_processing_chain(options, spec)?)
+    };
+    let latency_samples = chain
+        .as_ref()
+        .map(ProcessorChain::latency_samples)
+        .unwrap_or(0);
+    let (frames_written, metrics) = render_streaming(
+        Path::new(wav_source),
+        &output_wav_path,
+        WavWriteOptions::new(options.output_format, options.dither),
+        chain.as_mut(),
+        normalization_gain,
+        latency_samples,
+    )?;
+
+    println!(
+        "         \x1b[90mPeak: {:.4} ({:+.2} dBFS) | RMS: {:.4} ({:+.2} dBFS)\x1b[0m",
+        metrics.peak,
+        Gain::linear_to_db(metrics.peak),
+        metrics.rms(),
+        Gain::linear_to_db(metrics.rms())
+    );
+    if options.no_dsp {
         log_ok("Pristine pass-through done (no DSP).");
     } else {
-        log_step(4, 5, "Processing DSP ReScaling Chain...");
-
-        // A. Peak Normalization ke target headroom
-        Normalizer::normalize_channels_to_peak(&mut channels, target_linear);
-
-        // B. Dynamic Compressor (meratakan dinamika, bukan memotong)
-        let comp_config = CompressorConfig {
-            threshold_db: options.target_dbfs - 8.0,
-            ratio: 2.5,
-            knee_db: 3.0,
-            attack_ms: 8.0,
-            release_ms: 100.0,
-            makeup_gain_db: 0.8,
-            mode: DetectionMode::Rms,
-        };
-        // B/C. State DSP terisolasi per channel melalui processor chain.
-        let mut chain = ProcessorChain::new();
-        chain.push(CompressorProcessor::new(comp_config));
-        chain.push(LimiterProcessor::new(options.target_dbfs, 25.0, 2.0));
-        chain.prepare(AudioSpec::new(sample_rate, channels.len())?)?;
-
-        let mut channel_views: Vec<&mut [f32]> =
-            channels.iter_mut().map(Vec::as_mut_slice).collect();
-        let mut block = AudioBlock::new(&mut channel_views)?;
-        chain.process(&mut block)?;
-
-        final_peak = channels
-            .iter()
-            .map(|ch| Normalizer::find_peak(ch))
-            .fold(0.0_f32, f32::max);
-        final_rms = channels
-            .iter()
-            .map(|ch| Normalizer::calculate_rms(ch))
-            .fold(0.0_f32, f32::max);
-        println!(
-            "         \x1b[90mPeak: {:.4} ({:+.2} dBFS) | RMS: {:.4} ({:+.2} dBFS)\x1b[0m",
-            final_peak,
-            Gain::linear_to_db(final_peak),
-            final_rms,
-            Gain::linear_to_db(final_rms)
-        );
-        log_ok("ReScaling done.");
+        log_ok(&format!(
+            "ReScaling done ({latency_samples} samples latency compensated)."
+        ));
     }
 
     // --- Langkah 5: Simpan Output ---
     log_step(5, 5, "Saving output file...");
-    WavWriter::write_to_file_with_options(
-        &output_wav_path,
-        &channels,
-        header.sample_rate,
-        WavWriteOptions::new(options.output_format, options.dither),
-    )?;
     log_ok(&format!(
-        "WAV saved → \x1b[1;37m{}\x1b[0m",
-        output_wav_path.display()
+        "WAV saved → \x1b[1;37m{}\x1b[0m ({} frames)",
+        output_wav_path.display(),
+        frames_written
     ));
 
     // Encode balik ke MP3 jika input aslinya MP3
@@ -459,15 +440,285 @@ fn run_rescale(options: &CliOptions) -> Result<(), Box<dyn std::error::Error>> {
     // --- Ringkasan Akhir ---
     print_summary(
         song_stem,
-        initial_peak,
-        Gain::linear_to_db(initial_peak),
-        final_peak,
-        Gain::linear_to_db(final_peak),
+        analysis.peak,
+        Gain::linear_to_db(analysis.peak),
+        &metrics,
         options.target_dbfs,
-        &channels,
     );
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline Streaming (pass 1: analisis, pass 2: proses + tulis)
+// ---------------------------------------------------------------------------
+
+/// Ukuran blok streaming: cukup besar untuk mengamortisasi overhead I/O, cukup
+/// kecil untuk menjaga pemakaian memori konstan pada file berdurasi panjang.
+const STREAM_BLOCK_FRAMES: usize = 4_096;
+
+/// Hasil pass-1 read-only: header dan level awal seluruh file.
+struct InputAnalysis {
+    sample_rate: u32,
+    channels: usize,
+    total_frames: usize,
+    peak: f32,
+    rms: f32,
+}
+
+impl InputAnalysis {
+    fn duration_seconds(&self) -> f64 {
+        self.total_frames as f64 / f64::from(self.sample_rate)
+    }
+}
+
+/// Akumulator metrik output; memungkinkan ringkasan tanpa menahan audio di memori.
+struct OutputMetrics {
+    peak: f32,
+    per_channel_peak: Vec<f32>,
+    sum_squares: f64,
+    sample_count: usize,
+}
+
+impl OutputMetrics {
+    fn new(channels: usize) -> Self {
+        Self {
+            peak: 0.0,
+            per_channel_peak: vec![0.0; channels],
+            sum_squares: 0.0,
+            sample_count: 0,
+        }
+    }
+
+    /// Mencatat sampel yang benar-benar ditulis ke file (bukan sampel yang dibuang).
+    fn record(&mut self, block: &AudioBlock<'_>, frames: usize) {
+        for channel_index in 0..block.channels() {
+            let channel = block
+                .channel(channel_index)
+                .expect("validated channel count");
+            let written = &channel[..frames];
+            let channel_peak = Normalizer::find_peak(written);
+            self.per_channel_peak[channel_index] =
+                self.per_channel_peak[channel_index].max(channel_peak);
+            self.peak = self.peak.max(channel_peak);
+            for &sample in written {
+                self.sum_squares += f64::from(sample) * f64::from(sample);
+                self.sample_count += 1;
+            }
+        }
+    }
+
+    fn rms(&self) -> f32 {
+        if self.sample_count == 0 {
+            return 0.0;
+        }
+        (self.sum_squares / self.sample_count as f64).sqrt() as f32
+    }
+}
+
+/// Pass-1: memindai header dan level puncak/RMS tanpa menyimpan audio.
+fn analyze_input(path: &Path) -> Result<InputAnalysis, Box<dyn std::error::Error>> {
+    let mut reader = WavStreamReader::open(path)?;
+    let header = reader.header().clone();
+    let channels = header.num_channels as usize;
+
+    let mut buffers = vec![vec![0.0_f32; STREAM_BLOCK_FRAMES]; channels];
+    let mut peak = 0.0_f32;
+    let mut sum_squares = 0.0_f64;
+    let mut sample_count = 0_usize;
+
+    loop {
+        let frames_read = read_block_into(&mut reader, &mut buffers)?;
+        if frames_read == 0 {
+            break;
+        }
+        let mut channel_views: Vec<&mut [f32]> = buffers
+            .iter_mut()
+            .map(|buffer| &mut buffer[..frames_read])
+            .collect();
+        let block = AudioBlock::new(&mut channel_views)?;
+        for channel_index in 0..block.channels() {
+            let channel = block
+                .channel(channel_index)
+                .expect("validated channel count");
+            peak = peak.max(Normalizer::find_peak(channel));
+            for &sample in channel {
+                sum_squares += f64::from(sample) * f64::from(sample);
+                sample_count += 1;
+            }
+        }
+    }
+
+    let rms = if sample_count == 0 {
+        0.0
+    } else {
+        (sum_squares / sample_count as f64).sqrt() as f32
+    };
+
+    Ok(InputAnalysis {
+        sample_rate: header.sample_rate,
+        channels,
+        total_frames: header.num_samples_per_channel,
+        peak,
+        rms,
+    })
+}
+
+/// Gain normalisasi identik dengan `Normalizer::normalize_channels_to_peak`.
+fn normalization_gain(analysis: &InputAnalysis, target_peak: f32) -> f32 {
+    if analysis.peak <= 1e-6 {
+        1.0
+    } else {
+        target_peak / analysis.peak
+    }
+}
+
+fn build_processing_chain(
+    options: &CliOptions,
+    spec: AudioSpec,
+) -> Result<ProcessorChain, Box<dyn std::error::Error>> {
+    let compressor = CompressorProcessor::new(CompressorConfig {
+        threshold_db: options.target_dbfs - 8.0,
+        ratio: 2.5,
+        knee_db: 3.0,
+        attack_ms: 8.0,
+        release_ms: 100.0,
+        makeup_gain_db: 0.8,
+        mode: DetectionMode::Rms,
+    });
+
+    let mut chain = ProcessorChain::new();
+    chain.push(compressor);
+    chain.push(LimiterProcessor::new(options.target_dbfs, 25.0, 2.0));
+    chain.prepare(spec)?;
+    Ok(chain)
+}
+
+/// Pass-2: membaca blok, memproses, menulis, lalu meniriskan tail.
+///
+/// Kompensasi latency: `latency_samples` frame pertama dibuang dan tail yang
+/// setara ditarik lewat `flush()` di EOF, sehingga jumlah frame output sama
+/// dengan input dan tidak ada time-shift. Mengembalikan jumlah frame tertulis.
+fn render_streaming(
+    input_path: &Path,
+    output_path: &Path,
+    write_options: WavWriteOptions,
+    mut chain: Option<&mut ProcessorChain>,
+    normalization_gain: f32,
+    latency_samples: usize,
+) -> Result<(usize, OutputMetrics), Box<dyn std::error::Error>> {
+    let mut reader = WavStreamReader::open(input_path)?;
+    let header = reader.header().clone();
+    let channels = header.num_channels as usize;
+
+    let mut writer = WavStreamWriter::create(
+        output_path,
+        header.num_channels,
+        header.sample_rate,
+        write_options,
+    )?;
+
+    let mut buffers = vec![vec![0.0_f32; STREAM_BLOCK_FRAMES]; channels];
+    let mut metrics = OutputMetrics::new(channels);
+    let mut frames_to_discard = latency_samples;
+
+    loop {
+        let frames_read = read_block_into(&mut reader, &mut buffers)?;
+        if frames_read == 0 {
+            break;
+        }
+        let mut channel_views: Vec<&mut [f32]> = buffers
+            .iter_mut()
+            .map(|buffer| &mut buffer[..frames_read])
+            .collect();
+        let mut block = AudioBlock::new(&mut channel_views)?;
+        apply_normalization(&mut block, normalization_gain);
+        if let Some(chain) = chain.as_deref_mut() {
+            chain.process(&mut block)?;
+        }
+        write_compensated(
+            &mut writer,
+            &mut block,
+            frames_read,
+            &mut frames_to_discard,
+            &mut metrics,
+        )?;
+    }
+
+    if let Some(chain) = chain {
+        let mut flush_buffers = vec![vec![0.0_f32; STREAM_BLOCK_FRAMES]; channels];
+        loop {
+            let mut channel_views: Vec<&mut [f32]> = flush_buffers
+                .iter_mut()
+                .map(|buffer| buffer.as_mut_slice())
+                .collect();
+            let mut block = AudioBlock::new(&mut channel_views)?;
+            let frames_flushed = chain.flush(&mut block)?;
+            if frames_flushed == 0 {
+                break;
+            }
+            write_compensated(
+                &mut writer,
+                &mut block,
+                frames_flushed,
+                &mut frames_to_discard,
+                &mut metrics,
+            )?;
+        }
+    }
+
+    let written_header = writer.finalize()?;
+    Ok((written_header.num_samples_per_channel, metrics))
+}
+
+fn read_block_into<R: Read + Seek>(
+    reader: &mut WavStreamReader<R>,
+    buffers: &mut [Vec<f32>],
+) -> io::Result<usize> {
+    let mut channel_views: Vec<&mut [f32]> = buffers.iter_mut().map(Vec::as_mut_slice).collect();
+    let mut block = AudioBlock::new(&mut channel_views)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    reader.read_block(&mut block)
+}
+
+fn apply_normalization(block: &mut AudioBlock<'_>, gain_linear: f32) {
+    if (gain_linear - 1.0).abs() <= f32::EPSILON {
+        return;
+    }
+    for channel_index in 0..block.channels() {
+        let channel = block
+            .channel_mut(channel_index)
+            .expect("validated channel count");
+        Gain::apply_linear(channel, gain_linear);
+    }
+}
+
+/// Menulis `frames` frame sambil membuang `frames_to_discard` frame awal.
+fn write_compensated<W: Write + Seek>(
+    writer: &mut WavStreamWriter<W>,
+    block: &mut AudioBlock<'_>,
+    frames: usize,
+    frames_to_discard: &mut usize,
+    metrics: &mut OutputMetrics,
+) -> io::Result<()> {
+    let discarded = (*frames_to_discard).min(frames);
+    *frames_to_discard -= discarded;
+    let kept = frames - discarded;
+    if kept == 0 {
+        return Ok(());
+    }
+
+    if discarded > 0 {
+        for channel_index in 0..block.channels() {
+            let channel = block
+                .channel_mut(channel_index)
+                .expect("validated channel count");
+            channel.copy_within(discarded..frames, 0);
+        }
+    }
+
+    metrics.record(block, kept);
+    writer.write_block_frames(block, kept)
 }
 
 // ---------------------------------------------------------------------------
@@ -501,17 +752,13 @@ fn print_summary(
     song_stem: &str,
     before_peak: f32,
     before_db: f32,
-    after_peak: f32,
-    after_db: f32,
+    metrics: &OutputMetrics,
     target_dbfs: f32,
-    channels: &[Vec<f32>],
 ) {
-    let peak_l = Normalizer::find_peak(&channels[0]);
-    let peak_r = if channels.len() > 1 {
-        Normalizer::find_peak(&channels[1])
-    } else {
-        peak_l
-    };
+    let peak_l = metrics.per_channel_peak.first().copied().unwrap_or(0.0);
+    let peak_r = metrics.per_channel_peak.get(1).copied().unwrap_or(peak_l);
+    let after_peak = metrics.peak;
+    let after_db = Gain::linear_to_db(after_peak);
 
     println!("\n\x1b[1;32m┌─────────────────────────────────────────────────────────┐\x1b[0m");
     println!(
