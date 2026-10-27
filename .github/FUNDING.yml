@@ -1,0 +1,13 @@
+# Konfigurasi tombol "Sponsor" untuk repository REScale.
+# Dokumentasi: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+#
+# Catatan: tombol Sponsor baru muncul setelah file ini di-push ke branch default.
+
+# GitHub Sponsors — aktifkan dulu profil di https://github.com/sponsors
+# (fitur ini tersedia untuk individu di Indonesia).
+github: [0xjantoko]
+
+# Platform donasi lain (maksimal 4 URL). Isi dengan akunmu lalu hapus tanda '#'.
+# Bisa berupa Saweria/Trakteer (cocok untuk audiens Indonesia) atau
+# Ko-fi/Buy Me a Coffee (audiens global).
+# custom: ["https://saweria.co/USERNAME", "https://trakteer.id/USERNAME", "https://ko-fi.com/USERNAME"]
