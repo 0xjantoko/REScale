@@ -12,4 +12,4 @@ readme = "../../README.md"
 rust-version = "1.78"
 
 [dependencies]
-# Zero external dependencies
+# Tanpa dependensi eksternal

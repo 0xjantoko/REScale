@@ -12,6 +12,6 @@ indent_size = 4
 [*.{md,markdown,yml,yaml,json,toml}]
 indent_size = 2
 
-# Markdown uses trailing spaces for hard line breaks
+# Markdown memakai spasi di akhir baris untuk hard line break
 [*.md]
 trim_trailing_whitespace = false

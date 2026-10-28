@@ -71,7 +71,7 @@ impl DelayLine {
         self.read_delay(delay_samples, interp)
     }
 
-    /// Reset internal delay memory.
+    /// Reset memori delay internal.
     pub fn clear(&mut self) {
         self.ring.clear();
     }

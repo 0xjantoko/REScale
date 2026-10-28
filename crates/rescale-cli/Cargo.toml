@@ -8,7 +8,7 @@ keywords = ["audio", "mastering", "normalizer", "cli", "dsp"]
 categories = ["multimedia::audio", "command-line-utilities"]
 repository = "https://github.com/0xjantoko/REScale"
 rust-version = "1.78"
-# The mastering CLI is distributed as source in the repository, not on crates.io.
+# CLI mastering didistribusikan sebagai source di repository, bukan melalui crates.io.
 publish = false
 
 [[bin]]

@@ -5,6 +5,6 @@ output_*.mp3
 REScale-*.mp3
 *.log
 
-# Internal documents (not part of the public open-source distribution)
+# Dokumen internal (tidak termasuk distribusi open source publik)
 /private
 

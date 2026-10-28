@@ -1,6 +1,6 @@
-# Keep the pinned GitHub Actions versions current.
-# Rust crates.io dependencies are deliberately absent: this project has none,
-# and the CI job "Zero dependency policy" fails the build if that ever changes.
+# Jaga versi GitHub Actions yang di-pin tetap mutakhir.
+# Dependensi crate crates.io sengaja tidak ada: proyek ini tidak memakainya,
+# dan job CI "Zero dependency policy" akan menggagalkan build bila itu berubah.
 version: 2
 updates:
   - package-ecosystem: github-actions

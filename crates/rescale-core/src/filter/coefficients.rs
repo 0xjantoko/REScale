@@ -28,7 +28,7 @@ pub struct BiquadCoefficients {
 }
 
 impl BiquadCoefficients {
-    /// Membuat pass-through (unity gain) filter
+    /// Membuat filter pass-through (unity gain)
     pub fn identity() -> Self {
         Self {
             b0: 1.0,

@@ -52,7 +52,7 @@ impl<T: Copy + Default> RingBuffer<T> {
         self.capacity
     }
 
-    /// Reset seluruh buffer ke default value
+    /// Reset seluruh buffer ke nilai default
     pub fn clear(&mut self) {
         self.buffer.fill(T::default());
         self.write_pos = 0;

@@ -1,4 +1,4 @@
-//! Core DSP Engine & ReScaler in Pure Rust (Zero Dependency)
+//! Engine DSP Inti & ReScaler dalam Pure Rust (Zero Dependency)
 
 pub mod buffer;
 pub mod convert;

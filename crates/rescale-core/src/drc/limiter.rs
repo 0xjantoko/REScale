@@ -117,7 +117,7 @@ pub struct BrickwallLimiter {
 }
 
 impl BrickwallLimiter {
-    /// Membuat Limiter dengan lookahead time.
+    /// Membuat limiter dengan waktu lookahead.
     ///
     /// # Arguments
     /// * `sample_rate` - Frekuensi sampling (Hz)

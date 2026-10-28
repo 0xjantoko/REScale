@@ -1,7 +1,7 @@
-# Normalize line endings so clones on any OS produce identical files.
+# Normalisasi line ending agar clone di OS apa pun menghasilkan file identik.
 * text=auto eol=lf
 
-# Explicitly binary (never normalized)
+# Eksplisit biner (tidak pernah dinormalisasi)
 *.png binary
 *.jpg binary
 *.gif binary
@@ -9,5 +9,5 @@
 *.mp3 binary
 *.flac binary
 
-# Generated / lock files that must keep LF
+# File lock / generated yang harus tetap LF
 Cargo.lock text eol=lf
